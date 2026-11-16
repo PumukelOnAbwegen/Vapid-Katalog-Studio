@@ -44,6 +44,7 @@
 .range input{flex:1;min-width:0}
 .range strong{font-size:12px;min-width:40px;text-align:right;color:#f0d3a2}
 @media(max-width:610px){.extra-grid{grid-template-columns:1fr}}
+[hidden]{display:none!important}
 </style>
 </head>
 <body>
@@ -53,13 +54,29 @@
 <div class="row spread" style="margin-top:10px"><span class="caption" id="filterInfo">Alle Fahrzeuge</span><label class="caption row" style="gap:5px"><input type="checkbox" id="onlyPhotos">Nur mit Bild</label><select id="selectionFilter"><option value="all">Alle</option><option value="weekly">Wochenkatalog</option><option value="stock">Auf Lager</option><option value="none">Nicht ausgewählt</option></select></label></div></div>
 <div class="showall"><span class="pill" id="weekCounter">Woche: 0</span><span class="pill" id="stockCounter">Lager: 0</span><span class="pill" id="shownCounter">0 angezeigt</span></div>
 <div class="scroll-list" id="vehicleGrid"></div><button class="subtle load-more" id="more" hidden>Weitere Fahrzeuge anzeigen</button>
-<div class="extra-panel">
+<div class="box-inner" id="sharedControls" hidden>
+<div class="toolbar"><button id="sharedLogin" class="subtle" hidden>Zur Bearbeitung anmelden</button>
+<button id="sharedLogout" class="subtle" hidden>Abmelden</button>
+<button id="sharedPublish" hidden>Für alle veröffentlichen</button>
+<label class="filebutton" id="sharedBackupLabel" for="sharedBackup" hidden>Alte JSON-Sicherung übernehmen</label>
+<input id="sharedBackup" type="file" accept=".json,application/json" hidden>
+<button id="sharedExport" class="subtle">Projekt sichern (JSON)</button></div>
+<p id="sharedStatus" class="caption" role="status">Gemeinsamer Fahrzeugbestand wird geladen …</p>
+</div>
+<dialog class="popup" id="sharedLoginDialog"><form id="sharedLoginForm">
+<h2>Vapid-Katalog bearbeiten</h2>
+<div class="field"><label for="sharedEmail">E-Mail</label><input id="sharedEmail" type="email" autocomplete="username" required></div>
+<div class="field"><label for="sharedPassword">Passwort</label><input id="sharedPassword" type="password" autocomplete="current-password" required></div>
+<p id="sharedLoginError" class="caption" role="status"></p>
+<div class="toolbar"><button id="sharedLoginSubmit">Anmelden</button><button id="sharedCancelLogin" class="subtle" type="button">Abbrechen</button></div>
+</form></dialog>
+<div class="extra-panel" id="vehicleEditor">
 <h3>+ Fahrzeug ergänzen</h3>
 <div class="extra-grid"><label>Hersteller<input id="newMake" placeholder="z. B. Vapid" maxlength="70"></label><label>Fahrzeugname<input id="newName" placeholder="z. B. Speedo Express" maxlength="100"></label><label>Kategorie<input id="newCat" placeholder="z. B. Van" maxlength="70"></label><label>Fahrzeugbild (optional)<input id="newPhoto" type="file" accept="image/*"></label></div>
 <div class="toolbar"><button id="addVehicle">Fahrzeug hinzufügen</button><button class="subtle" id="exportProject">Projekt sichern (JSON)</button><label class="filebutton" for="importProject">Projekt laden (JSON)</label><input id="importProject" type="file" accept=".json,application/json" hidden></div>
-<div class="note">Auch selbst ergänzte Fahrzeuge können für Wochenkatalog und Lager ausgewählt werden. Bilder und Einstellungen werden lokal gespeichert. Mit der JSON-Sicherung kannst du sie auf einen anderen PC übertragen.</div>
+<div class="note" id="localCatalogNote">Auch selbst ergänzte Fahrzeuge können für Wochenkatalog und Lager ausgewählt werden. Bilder und Einstellungen werden lokal gespeichert. Mit der JSON-Sicherung kannst du sie auf einen anderen PC übertragen.</div>
 </div>
-<details class="opt"><summary>Fahrzeugliste und Bilder aus Google Sheets aktualisieren</summary><p>Die integrierten Bilder und Modellnamen stammen aus deiner Google-Tabelle „Fahrzeuge“. Für spätere Änderungen: Tabelle in Google Sheets als <b>Excel (.xlsx)</b> herunterladen und die Datei hier auswählen. Die Fahrzeugfotos werden automatisch den richtigen Modellen zugeordnet – kein einzelnes Hochladen nötig.</p>
+<details class="opt" id="catalogSource"><summary>Fahrzeugliste und Bilder aus Google Sheets aktualisieren</summary><p>Die integrierten Bilder und Modellnamen stammen aus deiner Google-Tabelle „Fahrzeuge“. Für spätere Änderungen: Tabelle in Google Sheets als <b>Excel (.xlsx)</b> herunterladen und die Datei hier auswählen. Die Fahrzeugfotos werden automatisch den richtigen Modellen zugeordnet – kein einzelnes Hochladen nötig.</p>
 <div class="row" style="margin-top:10px"><label class="filebutton" for="excel">Google-Tabellen-Export (.xlsx) einlesen</label><input type="file" id="excel" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden><button class="line slim" id="resetSeed">Stand vom 15.11.2026 wiederherstellen</button></div><p id="sourceInfo">Quellblatt: Modell · eingebettete Bilder in Spalte E</p></details></section>
 <section class="box"><div class="box-head"><div><div class="eyebrow">02 · Social Media</div><h2>Katalogbild gestalten</h2></div><span class="kicker" id="rightCounter">—</span></div>
 <div class="app-tabs"><button class="active" id="tabWeekly">Wochenkatalog</button><button id="tabStock">Auf Lager</button></div>
@@ -126,21 +143,22 @@ const escapeHTML=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 function say(s){$('message').textContent=s;}
 function isoWeek(){const local=new Date();const d=new Date(Date.UTC(local.getFullYear(),local.getMonth(),local.getDate()));d.setUTCDate(d.getUTCDate()+4-(d.getUTCDay()||7));const year=d.getUTCFullYear(),yearStart=new Date(Date.UTC(year,0,1));return {year,week:Math.ceil((((d-yearStart)/86400000)+1)/7)};}
 function weekLabel(){if(!state.autoKW&&state.manualKW.trim())return state.manualKW.trim();const q=isoWeek();return `KW ${String(q.week).padStart(2,'0')} / ${q.year}`;}
-function persist(){try{localStorage.setItem(STORE,JSON.stringify(state));}catch(e){say('Browser-Speicher voll. Die Auswahl gilt derzeit nur für diese Sitzung.');}}
-function applyStoredModelChanges(){
- const overrides=state.editedCars||{};
- models=models.filter(c=>!(state.deletedBase||[]).includes(idFor(c)));
- for(const c of models){const id=idFor(c),v=overrides[id];if(v){Object.assign(c,{make:v.make||c.make,name:v.name||c.name,cat:v.cat||c.cat,sourceId:id});}}
- for(const c of state.customCars||[]){if(c&&c.name&&c.make&&!models.some(m=>idFor(m)===idFor(c)))models.push({...c,image:''});}
+function persist(){try{localStorage.setItem(STORE,JSON.stringify(sharedEnabled ? {...state, ...localCatalog} : state));}catch(e){say('Browser-Speicher voll. Die Auswahl gilt derzeit nur für diese Sitzung.');}}
+function applyStoredModelChanges(source = models, saved = state){
+ const overrides=saved.editedCars||{};
+ const result=source.filter(c=>!(saved.deletedBase||[]).includes(idFor(c)));
+ for(const c of result){const id=idFor(c),v=overrides[id];if(v){Object.assign(c,{make:v.make||c.make,name:v.name||c.name,cat:v.cat||c.cat,sourceId:id});}}
+ for(const c of saved.customCars||[]){if(c&&c.name&&c.make&&!result.some(m=>idFor(m)===idFor(c)))result.push({...c,image:''});}
+ return result;
 }
 function initModels(){models.forEach(x=>x.id=idFor(x));const ids=new Set(models.map(x=>x.id));for(const t of ['weekly','stock'])state[t]=[...new Set(sel(t))].filter(id=>ids.has(id));}
 function reFilters(){const maker=$('manufacturer'),cat=$('category');const oldM=maker.value,oldC=cat.value;maker.innerHTML='<option value="">Alle Hersteller</option>'+[...new Set(models.map(m=>m.make).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'de')).map(x=>`<option value="${escapeHTML(x)}">${escapeHTML(x)}</option>`).join('');cat.innerHTML='<option value="">Alle Kategorien</option>'+[...new Set(models.map(m=>m.cat).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'de')).map(x=>`<option value="${escapeHTML(x)}">${escapeHTML(x)}</option>`).join('');maker.value=oldM;cat.value=oldC;}
-function updateCounts(){const photos=models.filter(c=>!!c.image).length;$('totalModels').textContent=`${models.length} Fahrzeuge`;$('totalImages').textContent=`${photos} Fotos aus Tabelle`;$('headKW').textContent=weekLabel();$('weekCounter').textContent=`Wochenkatalog: ${state.weekly.length}`;$('stockCounter').textContent=`Auf Lager: ${state.stock.length}`;$('selectedCount').textContent=`${state.weekly.length} Woche · ${state.stock.length} Lager`;$('rightCounter').textContent=`${sel(active).length} Fahrzeuge`;$('kwManual').value=weekLabel();}
+function updateCounts(){const photos=models.filter(c=>!!c.image).length;$('totalModels').textContent=`${models.length} Fahrzeuge`;$('totalImages').textContent=`${photos} Fahrzeugfotos`;$('headKW').textContent=weekLabel();$('weekCounter').textContent=`Wochenkatalog: ${state.weekly.length}`;$('stockCounter').textContent=`Auf Lager: ${state.stock.length}`;$('selectedCount').textContent=`${state.weekly.length} Woche · ${state.stock.length} Lager`;$('rightCounter').textContent=`${sel(active).length} Fahrzeuge`;$('kwManual').value=weekLabel();}
 function chosenModels(){const byId=new Map(models.map(x=>[x.id,x]));return sel(active).map(id=>byId.get(id)).filter(Boolean);}
 function getFiltered(){const q=$('search').value.trim().toLowerCase(),m=$('manufacturer').value,c=$('category').value,t=$('selectionFilter').value,only=$('onlyPhotos').checked;return models.filter(x=>(!m||x.make===m)&&(!c||x.cat===c)&&(!only||x.image)&&(!q||`${x.make} ${x.name} ${x.cat}`.toLowerCase().includes(q))&&(t==='all'||(t==='none'?!sel('weekly').includes(x.id)&&!sel('stock').includes(x.id):sel(t).includes(x.id))));}
-function renderGrid(){const arr=getFiltered(),shown=arr.slice(0,showMax);$('filterInfo').textContent=`${arr.length} passende Fahrzeuge`;const body=$('vehicleGrid');body.innerHTML=shown.map(c=>{const w=state.weekly.includes(c.id),s=state.stock.includes(c.id);return `<article class="vehicle${w||s?' has-choice':''}" data-id="${escapeHTML(c.id)}"><div class="photo">${c.image?`<img src="${c.image}" loading="lazy" alt="${escapeHTML(c.name)}">`:'<span class="no-photo">Kein Originalfoto<br>in der Tabelle</span>'}${c.image?'<span class="pic-count">ORIGINALFOTO</span>':''}</div><div class="info"><div class="model">${escapeHTML(c.name)}</div><div class="make">${escapeHTML(c.make)} · ${escapeHTML(c.cat||'Fahrzeug')}</div><div class="choice-row"><button class="${w?'chosen':''}" data-type="weekly" aria-pressed="${w}">${w?'✓ Woche':'+ Woche'}</button><button class="${s?'stock-chosen':''}" data-type="stock" aria-pressed="${s}">${s?'✓ Lager':'+ Lager'}</button></div><button class="edit-photo" data-edit="1" type="button">✎ Bild / Daten</button></div></article>`;}).join('');$('shownCounter').textContent=`${shown.length} sichtbar`;$('more').hidden=arr.length<=showMax;$('more').textContent=`Weitere anzeigen (${arr.length-showMax} verbleibend)`;updateCounts();}
+function renderGrid(){const arr=getFiltered(),shown=arr.slice(0,showMax);$('filterInfo').textContent=`${arr.length} passende Fahrzeuge`;const body=$('vehicleGrid');body.innerHTML=shown.map(c=>{const w=state.weekly.includes(c.id),s=state.stock.includes(c.id);return `<article class="vehicle${w||s?' has-choice':''}" data-id="${escapeHTML(c.id)}"><div class="photo">${c.image?`<img src="${c.image}" loading="lazy" alt="${escapeHTML(c.name)}">`:'<span class="no-photo">Kein Originalfoto<br>in der Tabelle</span>'}${c.image?'<span class="pic-count">ORIGINALFOTO</span>':''}</div><div class="info"><div class="model">${escapeHTML(c.name)}</div><div class="make">${escapeHTML(c.make)} · ${escapeHTML(c.cat||'Fahrzeug')}</div><div class="choice-row"><button class="${w?'chosen':''}" data-type="weekly" aria-pressed="${w}">${w?'✓ Woche':'+ Woche'}</button><button class="${s?'stock-chosen':''}" data-type="stock" aria-pressed="${s}">${s?'✓ Lager':'+ Lager'}</button></div><button class="edit-photo" data-edit="1" type="button">✎ Bild / Daten</button></div></article>`;}).join('');$('shownCounter').textContent=`${shown.length} sichtbar`;$('more').hidden=arr.length<=showMax;$('more').textContent=`Weitere anzeigen (${arr.length-showMax} verbleibend)`;updateCounts();if(sharedEnabled)updateSharedControls();}
 function changeSelection(id,type){const arr=sel(type),pos=arr.indexOf(id);if(pos>=0)arr.splice(pos,1);else arr.push(id);persist();renderGrid();refresh();}
-$('vehicleGrid').addEventListener('click',e=>{const edit=e.target.closest('button[data-edit]');if(edit){const car=edit.closest('[data-id]');if(car)openVehicleDialog(car.dataset.id);return;}const b=e.target.closest('button[data-type]'),car=b&&b.closest('[data-id]');if(car)changeSelection(car.dataset.id,b.dataset.type);});
+$('vehicleGrid').addEventListener('click',e=>{const edit=e.target.closest('button[data-edit]');if(edit){const car=edit.closest('[data-id]');if(car&&(!sharedEnabled||(isEditor&&sharedRevision!==undefined&&!sharedBusy)))openVehicleDialog(car.dataset.id);return;}const b=e.target.closest('button[data-type]'),car=b&&b.closest('[data-id]');if(car)changeSelection(car.dataset.id,b.dataset.type);});
 $('more').addEventListener('click',()=>{showMax+=90;renderGrid();});
 for(const k of ['search','manufacturer','category','selectionFilter','onlyPhotos'])$(k).addEventListener(k==='search'?'input':'change',()=>{showMax=90;renderGrid();});
 function saveModeSubtitle(){if(active==='weekly')state.subtitleWeekly=$('subtitle').value;else state.subtitleStock=$('subtitle').value;persist();scheduleDraw();}
@@ -159,7 +177,7 @@ $('kwManual').oninput=()=>{state.manualKW=$('kwManual').value;persist();updateCo
 function renderSelected(){const a=chosenModels();$('sortCount').textContent=`(${a.length})`;$('chosenList').innerHTML=a.length?a.map((x,i)=>`<div class="chosen-line"><span class="name">${i+1}. ${escapeHTML(x.name)} <span class="caption">${escapeHTML(x.make)}</span></span><button data-move="-1" data-id="${escapeHTML(x.id)}" ${i===0?'disabled':''}>↑</button><button data-move="1" data-id="${escapeHTML(x.id)}" ${i===a.length-1?'disabled':''}>↓</button></div>`).join(''):'<p class="caption">Noch keine Fahrzeuge ausgewählt.</p>';}
 $('chosenList').addEventListener('click',e=>{const b=e.target.closest('button[data-move]');if(!b)return;let list=sel(active),i=list.indexOf(b.dataset.id),j=i+Number(b.dataset.move);if(i<0||j<0||j>=list.length)return;[list[i],list[j]]=[list[j],list[i]];persist();refresh();});
 function refresh(all=true){const a=chosenModels(),o=opt[$('format').value],pages=Math.max(1,Math.ceil(a.length/pageCapacity()));currentPage=Math.min(currentPage,pages-1);$('page').innerHTML=Array.from({length:pages},(_,i)=>`<option value="${i}">${i+1} / ${pages}</option>`).join('');$('page').value=String(currentPage);$('pageInfo').textContent=`${a.length} Fahrzeuge · ${a.length?pages:0} Bildseite(n) · ${o.w} × ${o.h} px`;updateCounts();renderSelected();scheduleDraw();}
-const loadImg=src=>new Promise(resolve=>{if(!src)return resolve(null);if(imageCache.has(src))return resolve(imageCache.get(src));let im=new Image();im.onload=()=>{imageCache.set(src,im);resolve(im)};im.onerror=()=>resolve(null);im.src=src;});
+const loadImg=src=>new Promise(resolve=>{if(!src)return resolve(null);if(imageCache.has(src))return resolve(imageCache.get(src));let im=new Image();im.onload=()=>{imageCache.set(src,im);resolve(im)};im.onerror=()=>resolve(null);if(/^https:\/\//i.test(src))im.crossOrigin='anonymous';im.src=src;});
 const fill=(c,color,x,y,w,h)=>{c.fillStyle=color;c.fillRect(x,y,w,h)};
 function roundRect(c,x,y,w,h,r){c.beginPath();if(c.roundRect)c.roundRect(x,y,w,h,r);else c.rect(x,y,w,h);}
 function drawContain(c,img,x,y,w,h){let scale=Math.min(w/img.width,h/img.height),iw=img.width*scale,ih=img.height*scale;c.drawImage(img,x+(w-iw)/2,y+(h-ih)/2,iw,ih);}
@@ -319,24 +337,24 @@ const tags=(node,name)=>Array.from(node.getElementsByTagNameNS('*',name));
 const first=(node,name)=>tags(node,name)[0];
 const toImageData=async(b,name)=>{const mime=/\.png$/i.test(name)?'image/png':/\.webp$/i.test(name)?'image/webp':'image/jpeg';let bitmap=await createImageBitmap(new Blob([b],{type:mime}));let scale=Math.min(1,850/bitmap.width,510/bitmap.height),can=document.createElement('canvas');can.width=Math.max(1,Math.round(bitmap.width*scale));can.height=Math.max(1,Math.round(bitmap.height*scale));can.getContext('2d').drawImage(bitmap,0,0,can.width,can.height);bitmap.close?.();return can.toDataURL('image/webp',.82);};
 async function dbInit(){return new Promise(resolve=>{if(!window.indexedDB)return resolve(null);try{let req=indexedDB.open('vapid-catalog-images',1);req.onupgradeneeded=()=>req.result.createObjectStore('photos');req.onerror=()=>resolve(null);req.onsuccess=()=>resolve(req.result);}catch(e){resolve(null);}});}
-function dbSave(record){if(!db)return;try{let tx=db.transaction('photos','readwrite');tx.objectStore('photos').put(record.image,record.id);}catch(e){}}
+function dbSave(record){if(sharedEnabled||!db)return;try{let tx=db.transaction('photos','readwrite');tx.objectStore('photos').put(record.image,record.id);}catch(e){}}
 async function dbLoad(){if(!db)return;return new Promise(res=>{const tx=db.transaction('photos','readonly'),req=tx.objectStore('photos').getAllKeys();req.onsuccess=async()=>{let keys=req.result||[],byId=new Map(models.map(x=>[x.id,x]));let promises=keys.map(k=>new Promise(resolve=>{let r=tx.objectStore('photos').get(k);r.onsuccess=()=>{if(byId.has(k)&&r.result)byId.get(k).image=r.result;resolve()};r.onerror=resolve;}));await Promise.all(promises);res();};req.onerror=res;});}
 async function loadExcel(file){$('excel').disabled=true;say(`Lese ${file.name} …`);try{let zip=await openZip(await file.arrayBuffer()),sh=await zip.read('xl/worksheets/sheet1.xml'),ss=await zip.read('xl/sharedStrings.xml'),drawing=await zip.read('xl/drawings/drawing1.xml'),rels=await zip.read('xl/drawings/_rels/drawing1.xml.rels');if(!sh||!ss)throw Error('Blattdaten oder Strings fehlen');const strings=tags(xmlDoc(ss),'si').map(n=>tags(n,'t').map(t=>t.textContent).join(''));
 let fresh=[];for(const r of tags(xmlDoc(sh),'row')){const rowNumber=Number(r.getAttribute('r'));if(rowNumber<3)continue;let obj={};for(const c of tags(r,'c')){let name=(c.getAttribute('r')||'').match(/^[A-Z]+/)?.[0];if(!name)continue;const v=first(c,'v'),is=first(c,'is');if(v){const val=v.textContent;obj[name]=c.getAttribute('t')==='s'?(strings[Number(val)]||''):val;}else if(is)obj[name]=tags(is,'t').map(t=>t.textContent).join('');}const make=(obj.C||'').trim(),name=(obj.D||'').trim();if(!name||name==='nix'||name==='Anwaltskosten')continue;fresh.push({row:rowNumber,make,name,cat:(obj.B||'').trim(),image:''});}
 if(!fresh.length)throw Error('Keine Fahrzeugnamen in Blatt Modell gefunden');let map={};if(drawing&&rels){const relsDoc=xmlDoc(rels);for(const r of tags(relsDoc,'Relationship'))map[r.getAttribute('Id')]=(r.getAttribute('Target')||'').replace(/^\.\.\//,'xl/');const picDoc=xmlDoc(drawing);let anchorPics={};for(const anc of [...tags(picDoc,'oneCellAnchor'),...tags(picDoc,'twoCellAnchor')]){const from=first(anc,'from'),blip=first(anc,'blip');if(!from||!blip)continue;let col=Number(first(from,'col')?.textContent),row=Number(first(from,'row')?.textContent)+1;let rid=blip.getAttribute('r:embed')||blip.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','embed');if(col===4&&map[rid])anchorPics[row]=map[rid];}
 let done=0,found=0;for(const c of fresh){const imgName=anchorPics[c.row];if(!imgName)continue;const b=await zip.read(imgName);if(!b)continue;try{c.image=await toImageData(b,imgName);found++;}catch(e){}done++;if(done%10===0){say(`Eingebettete Fahrzeugbilder werden übernommen: ${done} verarbeitet …`);await new Promise(resolve=>setTimeout(resolve,0));}}}
-let prevImages=new Map(models.map(c=>[c.id,c.image]));models=fresh;applyStoredModelChanges();initModels();for(const c of models){if(prevImages.has(c.id)&&prevImages.get(c.id))c.image=prevImages.get(c.id);if((state.hiddenPhotos||[]).includes(c.id))c.image='';else if(c.image)dbSave(c);}imageCache.clear();reFilters();renderGrid();refresh();persist();say(`Aktualisiert: ${models.length} Fahrzeuge, ${models.filter(x=>x.image).length} Bilder verfügbar. Fotos aus der Excel-Datei wurden automatisch zugeordnet.`);
+let prevImages=new Map(models.map(c=>[c.id,c.image]));models=fresh;if(!sharedEnabled)models=applyStoredModelChanges();initModels();for(const c of models){if(prevImages.has(c.id)&&prevImages.get(c.id))c.image=prevImages.get(c.id);if((state.hiddenPhotos||[]).includes(c.id))c.image='';else if(c.image)dbSave(c);}imageCache.clear();reFilters();renderGrid();refresh();persist();say(`Aktualisiert: ${models.length} Fahrzeuge, ${models.filter(x=>x.image).length} Bilder verfügbar. Fotos aus der Excel-Datei wurden automatisch zugeordnet.`);
 }catch(e){say('XLSX-Import fehlgeschlagen: '+e.message);}finally{$('excel').disabled=false;$('excel').value='';}}
 $('excel').onchange=e=>{const f=e.target.files?.[0];if(f)loadExcel(f);};
-$('resetSeed').onclick=()=>{if(!confirm('Fahrzeugliste wieder auf den importierten Stand vom 15.11.2026 setzen? Deine Katalogauswahl bleibt erhalten.'))return;models=SEED.map(x=>({...x}));applyStoredModelChanges();initModels();imageCache.clear();reFilters();renderGrid();refresh();say('Originalstand aus der Google-Tabelle geladen.');};
+$('resetSeed').onclick=()=>{if(!confirm('Fahrzeugliste wieder auf den importierten Stand vom 15.11.2026 setzen? Deine Katalogauswahl bleibt erhalten.'))return;if(sharedEnabled){installSharedModels(SEED.map(x=>({...x})));return;}models=SEED.map(x=>({...x}));models=applyStoredModelChanges();initModels();imageCache.clear();reFilters();renderGrid();refresh();say('Originalstand aus der Google-Tabelle geladen.');};
 
 // ===== VAPID STUDIO 4.0: vehicles, original photos, backgrounds and typography =====
 function dataImage(file,maxWidth=1600,maxHeight=1100,quality=.91){return new Promise((resolve,reject)=>{
  if(!file||!file.type.startsWith('image/'))return reject(new Error('Bitte eine Bilddatei auswählen.'));
  const url=URL.createObjectURL(file),im=new Image();im.onload=()=>{let scale=Math.min(1,maxWidth/im.naturalWidth,maxHeight/im.naturalHeight),cn=document.createElement('canvas');cn.width=Math.max(1,Math.round(im.naturalWidth*scale));cn.height=Math.max(1,Math.round(im.naturalHeight*scale));cn.getContext('2d').drawImage(im,0,0,cn.width,cn.height);URL.revokeObjectURL(url);resolve(cn.toDataURL('image/webp',quality));};im.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('Bild konnte nicht gelesen werden.'));};im.src=url;
  });}
-function dbPut(key,value){return new Promise(resolve=>{if(!db)return resolve(false);try{const tr=db.transaction('photos','readwrite');tr.objectStore('photos').put(value,key);tr.oncomplete=()=>resolve(true);tr.onerror=()=>resolve(false);}catch(_){resolve(false);}});}
-function dbDelete(key){return new Promise(resolve=>{if(!db)return resolve(false);try{const tr=db.transaction('photos','readwrite');tr.objectStore('photos').delete(key);tr.oncomplete=()=>resolve(true);tr.onerror=()=>resolve(false);}catch(_){resolve(false);}});}
+function dbPut(key,value){return new Promise(resolve=>{if((sharedEnabled&&!key.startsWith('background::'))||!db)return resolve(false);try{const tr=db.transaction('photos','readwrite');tr.objectStore('photos').put(value,key);tr.oncomplete=()=>resolve(true);tr.onerror=()=>resolve(false);}catch(_){resolve(false);}});}
+function dbDelete(key){return new Promise(resolve=>{if((sharedEnabled&&!key.startsWith('background::'))||!db)return resolve(false);try{const tr=db.transaction('photos','readwrite');tr.objectStore('photos').delete(key);tr.oncomplete=()=>resolve(true);tr.onerror=()=>resolve(false);}catch(_){resolve(false);}});}
 function dbGet(key){return new Promise(resolve=>{if(!db)return resolve(null);try{const r=db.transaction('photos','readonly').objectStore('photos').get(key);r.onsuccess=()=>resolve(r.result||null);r.onerror=()=>resolve(null);}catch(_){resolve(null);}});}
 function openVehicleDialog(id){let c=models.find(x=>x.id===id);if(!c)return;editVehicleId=id;$('photoDialogTitle').textContent='Fahrzeug bearbeiten: '+c.name;$('photoDialogHint').textContent='Bilder aus Google Sheets können ersetzt oder bei fehlenden Fotos ergänzt werden.';$('editMake').value=c.make;$('editName').value=c.name;$('editCat').value=c.cat;$('editPhoto').value='';$('editPreview').src=c.image||'';$('editPreview').style.visibility=c.image?'visible':'hidden';$('deleteCustomVehicle').hidden=!(state.customCars||[]).some(x=>idFor(x)===id);$('photoDialog').showModal();}
 $('cancelVehicleEdit').onclick=()=>$('photoDialog').close();
@@ -360,13 +378,312 @@ $('backgroundOpacity').oninput=()=>{state.backgroundOpacity=Number($('background
 for(const k of ['nameFont','makeFont','headingFont','nameScale','makeScale','headingScale'])$(k).addEventListener('input',()=>{state[k]=k.endsWith('Scale')?Number($(k).value):$(k).value;if(k.endsWith('Scale'))$(k+'Value').textContent=state[k]+' %';persist();scheduleDraw();});
 // Portable backup: include image data so reopening the HTML does not require the old browser.
 $('exportProject').onclick=async()=>{say('Sicherung mit Fahrzeugbildern und Hintergründen wird vorbereitet …');let photos={};for(const c of models){let d=await dbGet(c.id);if(d)photos[c.id]=d;}let backgrounds={};for(const c of state.customBackgrounds||[]){let d=await dbGet('background::'+c.id);if(d)backgrounds[c.id]=d;}const blob=new Blob([JSON.stringify({version:4,created:new Date().toISOString(),state,photos,backgrounds})],{type:'application/json'});saveBlob(blob,'Vapid_Katalog_Projekt_'+new Date().toISOString().slice(0,10)+'.json');say('Projektdatei gesichert.');};
-$('importProject').onchange=async e=>{let f=e.target.files?.[0];if(!f)return;try{let data=JSON.parse(await f.text());if(data.version!==4||!data.state)throw Error('Diese Datei ist keine Vapid-Studio-4-Projektsicherung.');if(!confirm('Die aktuelle Auswahl und deine Änderungen durch die Sicherung ersetzen?'))return;Object.assign(state,data.state);for(const [k,d] of Object.entries(data.photos||{}))await dbPut(k,d);for(const [k,d] of Object.entries(data.backgrounds||{}))await dbPut('background::'+k,d);models=SEED.map(x=>({...x}));applyStoredModelChanges();initModels();await dbLoad();for(const c of models)if((state.hiddenPhotos||[]).includes(c.id))c.image='';backgroundCache.clear();imageCache.clear();persist();restoreExtendedControls();reFilters();renderGrid();refresh();say('Projekt vollständig wiederhergestellt.');}catch(err){say('Projektdatei konnte nicht geladen werden: '+err.message);}e.target.value='';};
+$('importProject').onchange=async e=>{let f=e.target.files?.[0];if(!f)return;try{let data=JSON.parse(await f.text());if(data.version!==4||!data.state)throw Error('Diese Datei ist keine Vapid-Studio-4-Projektsicherung.');if(!confirm('Die aktuelle Auswahl und deine Änderungen durch die Sicherung ersetzen?'))return;Object.assign(state,data.state);for(const [k,d] of Object.entries(data.photos||{}))await dbPut(k,d);for(const [k,d] of Object.entries(data.backgrounds||{}))await dbPut('background::'+k,d);models=SEED.map(x=>({...x}));models=applyStoredModelChanges();initModels();await dbLoad();for(const c of models)if((state.hiddenPhotos||[]).includes(c.id))c.image='';backgroundCache.clear();imageCache.clear();persist();restoreExtendedControls();reFilters();renderGrid();refresh();say('Projekt vollständig wiederhergestellt.');}catch(err){say('Projektdatei konnte nicht geladen werden: '+err.message);}e.target.value='';};
 function restoreExtendedControls(){for(const k of ['nameFont','makeFont','headingFont','nameScale','makeScale','headingScale']){if($(k)){$(k).value=String(state[k]??(k.endsWith('Scale')?100:'Arial'));if(k.endsWith('Scale'))$(k+'Value').textContent=$(k).value+' %';}}$('backgroundOpacity').value=state.backgroundOpacity??100;$('backgroundOpacityValue').textContent=$('backgroundOpacity').value+' %';refreshBackdropList();$('theme').value=state.theme||'classic';document.querySelectorAll('.design-tile').forEach(x=>x.classList.toggle('active',x.dataset.theme===state.theme));}
 
-(async function init(){$('headlogo').src=BRAND;applyStoredModelChanges();initModels();$('format').value=state.format in opt?state.format:'wide';
+// Configure with the Project URL and publishable key from Supabase Connect.
+const SUPABASE_URL = 'https://usfwmcnpxiovckcuzgjv.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_P6BlqaCgrbcoE3z_Vhlc8g_NCHAN-F4';
+const sharedEnabled = Boolean(SUPABASE_URL || SUPABASE_PUBLISHABLE_KEY);
+const catalogKeys = ['customCars', 'editedCars', 'deletedBase', 'hiddenPhotos'];
+const localCatalog = Object.fromEntries(catalogKeys.map(key => [key, state[key]]));
+const seedById = new Map(SEED.map(car => [idFor(car), car]));
+const seedImageIds = new Map([...seedById].filter(([, car]) => car.image).map(([id, car]) => [car.image, id]));
+const photoBucket = 'vapid-fahrzeugbilder';
+const storagePathPattern = /^photos\/[0-9a-f-]{36}\.(jpg|png|webp|gif)$/;
+let sharedClient, sharedRevision, isEditor = false, sharedBusy = false, sharedDirty = false;
+let authCheck = 0;
+const publishedPhotos = new Map();
+const stagedPhotos = new Map();
+
+function sharedStatus(text) {
+  $('sharedStatus').textContent = text;
+}
+
+function updateSharedControls() {
+  const editable = isEditor && sharedRevision !== undefined && !sharedBusy;
+  $('vehicleEditor').hidden = !isEditor;
+  $('catalogSource').hidden = !isEditor;
+  $('sharedPublish').hidden = !isEditor;
+  $('sharedBackupLabel').hidden = !isEditor;
+  for (const key of ['addVehicle', 'saveVehicleEdit', 'deleteVehiclePhoto',
+    'deleteCustomVehicle', 'resetSeed', 'excel', 'sharedBackup']) $(key).disabled = !editable;
+  $('sharedPublish').disabled = !editable || !sharedDirty;
+  document.querySelectorAll('#vehicleGrid [data-edit]').forEach(button => {
+    button.hidden = !isEditor || sharedRevision === undefined;
+    button.disabled = !editable;
+  });
+}
+
+function installSharedModels(next) {
+  models = next;
+  state.customCars = next.filter(car => !seedById.has(idFor(car)))
+    .map(({make, name, cat}) => ({make, name, cat}));
+  state.editedCars = {};
+  state.deletedBase = [];
+  state.hiddenPhotos = [];
+  initModels();
+  imageCache.clear();
+  reFilters();
+  renderGrid();
+  refresh();
+  updateSharedControls();
+}
+
+function photoUrl(path) {
+  return sharedClient.storage.from(photoBucket).getPublicUrl(path).data.publicUrl;
+}
+
+async function loadSharedCatalog() {
+  const {data, error} = await sharedClient.from('vapid_catalog').select('revision,vehicles').eq('id', 1).single();
+  if (error) throw error;
+  const photos = new Map();
+  const next = data.vehicles === null ? SEED.map(car => ({...car})) : data.vehicles.map(car => {
+    let image = seedById.get(car.seed_photo)?.image || '';
+    if (storagePathPattern.test(car.photo_path || '')) {
+      image = photoUrl(car.photo_path);
+      photos.set(image, car.photo_path);
+    }
+    return {make: car.make, name: car.name, cat: car.cat, image};
+  });
+  publishedPhotos.clear();
+  for (const [url, path] of photos) publishedPhotos.set(url, path);
+  sharedRevision = data.revision;
+  sharedDirty = false;
+  installSharedModels(next);
+}
+
+async function uploadSharedPhoto(image) {
+  if (publishedPhotos.has(image)) return publishedPhotos.get(image);
+  if (stagedPhotos.has(image)) return stagedPhotos.get(image);
+  const match = /^data:image\/(jpeg|png|webp|gif);base64,/i.exec(image);
+  if (!match) throw Error('Ein Fahrzeugfoto hat ein nicht unterstütztes Format.');
+  const blob = await (await fetch(image)).blob();
+  const format = match[1].toLowerCase();
+  const path = 'photos/' + crypto.randomUUID() + '.' + (format === 'jpeg' ? 'jpg' : format);
+  const {error} = await sharedClient.storage.from(photoBucket).upload(path, blob, {
+    contentType: blob.type, cacheControl: '31536000'
+  });
+  if (error) throw error;
+  stagedPhotos.set(image, path);
+  return path;
+}
+
+async function publishSharedCatalog() {
+  if (sharedBusy || !isEditor || !sharedDirty || sharedRevision === undefined) return;
+  sharedBusy = true;
+  updateSharedControls();
+  try {
+    const vehicles = [];
+    for (const car of models) {
+      const seedPhoto = seedImageIds.get(car.image);
+      const photoPath = car.image && !seedPhoto ? await uploadSharedPhoto(car.image) : null;
+      vehicles.push({make: car.make, name: car.name, cat: car.cat, seed_photo: seedPhoto || null, photo_path: photoPath});
+    }
+    const {data, error} = await sharedClient.from('vapid_catalog')
+      .update({vehicles, revision: sharedRevision + 1}).eq('id', 1).eq('revision', sharedRevision)
+      .select('revision').maybeSingle();
+    if (error) throw error;
+    if (!data) throw Error('Der Katalog wurde zwischenzeitlich geändert. Sichere deinen Entwurf als JSON und lade den aktuellen Stand neu.');
+    sharedRevision = data.revision;
+    sharedDirty = false;
+    for (const [index, car] of models.entries()) {
+      const path = vehicles[index].photo_path;
+      if (path) {
+        car.image = photoUrl(path);
+        publishedPhotos.set(car.image, path);
+      }
+    }
+    stagedPhotos.clear();
+    imageCache.clear();
+    renderGrid();
+    refresh();
+    sharedStatus('Veröffentlicht. Besucher sehen den neuen Stand beim nächsten Laden.');
+  } catch (error) {
+    sharedStatus('Veröffentlichung fehlgeschlagen. Entwurf weiterhin geöffnet. ' + error.message);
+  } finally {
+    sharedBusy = false;
+    updateSharedControls();
+  }
+}
+
+async function loadSharedBackup(event) {
+  const file = event.target.files?.[0];
+  event.target.value = '';
+  if (!file) return;
+  const backup = JSON.parse(await file.text());
+  if (backup.version !== 4 || !backup.state) throw Error('Bitte eine Vapid-Studio-Projektsicherung (Version 4) auswählen.');
+  const next = applyStoredModelChanges(SEED.map(car => ({...car})), backup.state);
+  for (const car of next) {
+    const id = idFor(car);
+    if ((backup.state.hiddenPhotos || []).includes(id)) car.image = '';
+    else if (typeof backup.photos?.[id] === 'string') car.image = backup.photos[id];
+  }
+  if (confirm(next.length + ' Fahrzeuge aus der Sicherung als Entwurf übernehmen?')) installSharedModels(next);
+}
+
+async function exportSharedBackup() {
+  const catalogState = {...state, customCars: [], editedCars: {}, deletedBase: [], hiddenPhotos: []};
+  const carsById = new Map(models.map(car => [car.id, car]));
+  const photos = {}, backgrounds = {};
+  for (const id of seedById.keys()) if (!carsById.has(id)) catalogState.deletedBase.push(id);
+  for (const car of models) {
+    const base = seedById.get(car.id);
+    const {make, name, cat} = car;
+    if (!base) catalogState.customCars.push({make, name, cat});
+    else catalogState.editedCars[car.id] = {make, name, cat};
+    if (!car.image && base?.image) catalogState.hiddenPhotos.push(car.id);
+    else if (car.image && car.image !== base?.image) {
+      if (!publishedPhotos.has(car.image)) photos[car.id] = car.image;
+      else {
+        const response = await fetch(car.image);
+        if (!response.ok) throw Error('Fahrzeugfoto konnte nicht geladen werden: ' + car.name);
+        const blob = await response.blob();
+        photos[car.id] = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(blob);
+        });
+      }
+    }
+  }
+  for (const item of state.customBackgrounds || []) {
+    const image = await dbGet('background::' + item.id);
+    if (image) backgrounds[item.id] = image;
+  }
+  saveBlob(new Blob([JSON.stringify({version: 4, created: new Date().toISOString(), state: catalogState, photos, backgrounds})],
+    {type: 'application/json'}), 'Vapid_Katalog_Projekt.json');
+  say('Projektdatei gesichert.');
+}
+
+async function updateEditor(session) {
+  const check = ++authCheck;
+  isEditor = false;
+  $('sharedLogin').hidden = Boolean(session);
+  $('sharedLogout').hidden = !session;
+  updateSharedControls();
+  if (!session) return;
+  const {data, error} = await sharedClient.from('vapid_editors').select('user_id').eq('user_id', session.user.id).maybeSingle();
+  if (check !== authCheck) return;
+  isEditor = !error && Boolean(data);
+  if (error) say('Bearbeitungsrechte konnten nicht geprüft werden.');
+  else if (!isEditor) say('Dieses Konto hat keine Bearbeitungsrechte.');
+  updateSharedControls();
+}
+
+async function initSharedCatalog() {
+  $('sharedControls').hidden = false;
+  $('vehicleEditor').hidden = true;
+  $('catalogSource').hidden = true;
+  $('localCatalogNote').hidden = true;
+  document.querySelector('label[for="importProject"]').hidden = true;
+
+  // Keep the original handlers for offline use and reuse the editor in shared mode.
+  for (const [id, eventName] of [
+    ['addVehicle', 'onclick'], ['saveVehicleEdit', 'onclick'], ['deleteVehiclePhoto', 'onclick'],
+    ['deleteCustomVehicle', 'onclick'], ['resetSeed', 'onclick'], ['excel', 'onchange'], ['sharedBackup', 'onchange']
+  ]) {
+    const button = $(id);
+    const handler = id === 'sharedBackup' ? loadSharedBackup :
+      id === 'excel' ? async event => {
+        const file = event.target.files?.[0];
+        if (file && confirm('Die Fahrzeugliste aus Excel als Entwurf übernehmen?')) {
+          await loadExcel(file);
+          installSharedModels(models);
+        }
+        event.target.value = '';
+      } : button[eventName];
+    button[eventName] = async event => {
+      if (!isEditor || sharedBusy || sharedRevision === undefined) return;
+      sharedBusy = true;
+      updateSharedControls();
+      const before = JSON.stringify(models);
+      try {
+        await handler(event);
+      } catch (error) {
+        say(error.message);
+      } finally {
+        if (before !== JSON.stringify(models)) {
+          sharedDirty = true;
+          sharedStatus('Entwurf geändert. Mit „Für alle veröffentlichen“ freigeben.');
+        }
+        sharedBusy = false;
+        updateSharedControls();
+      }
+    };
+  }
+  $('sharedPublish').onclick = publishSharedCatalog;
+  $('sharedExport').onclick = async () => {
+    try { await exportSharedBackup(); } catch (error) { sharedStatus(error.message); }
+  };
+  $('exportProject').onclick = $('sharedExport').onclick;
+  window.addEventListener('beforeunload', event => {
+    if (sharedDirty || sharedBusy) {
+      event.preventDefault();
+      event.returnValue = true;
+    }
+  });
+
+  try {
+    if (!/^https:\/\/[a-z0-9]+\.supabase\.co$/i.test(SUPABASE_URL) ||
+        !/^sb_publishable_[\w-]+$/.test(SUPABASE_PUBLISHABLE_KEY)) {
+      throw Error('Bitte die Supabase-Projekt-URL und den Publishable Key eintragen.');
+    }
+    const {createClient} = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
+    sharedClient = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+      auth: {storageKey: STORE + '_supabase', detectSessionInUrl: false}
+    });
+    $('sharedLogin').hidden = false;
+    $('sharedLogin').onclick = () => $('sharedLoginDialog').showModal();
+    $('sharedCancelLogin').onclick = () => $('sharedLoginDialog').close();
+    $('sharedLoginForm').onsubmit = async event => {
+      event.preventDefault();
+      $('sharedLoginSubmit').disabled = true;
+      $('sharedLoginError').textContent = '';
+      try {
+        const {data, error} = await sharedClient.auth.signInWithPassword({
+          email: $('sharedEmail').value.trim(), password: $('sharedPassword').value
+        });
+        if (error) throw error;
+        $('sharedPassword').value = '';
+        $('sharedLoginDialog').close();
+        await updateEditor(data.session);
+      } catch (error) {
+        $('sharedLoginError').textContent = 'Anmeldung fehlgeschlagen. ' + error.message;
+      } finally {
+        $('sharedLoginSubmit').disabled = false;
+      }
+    };
+    $('sharedLogout').onclick = async () => {
+      if (sharedBusy) return;
+      if (sharedDirty && !confirm('Den unveröffentlichten Entwurf beim Abmelden verwerfen?')) return;
+      try {
+        const {error} = await sharedClient.auth.signOut();
+        if (error) throw error;
+        await updateEditor(null);
+        if (sharedDirty) {
+          sharedDirty = false;
+          location.reload();
+        }
+      } catch (error) { sharedStatus(error.message); }
+    };
+    sharedClient.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT' || event === 'SIGNED_IN') setTimeout(() => updateEditor(session).catch(error => say(error.message)), 0);
+    });
+    await loadSharedCatalog();
+    sharedStatus('Gemeinsamer Fahrzeugbestand geladen.');
+    const {data} = await sharedClient.auth.getSession();
+    await updateEditor(data.session);
+  } catch (error) {
+    sharedStatus('Gemeinsamer Fahrzeugbestand nicht verfügbar. ' + error.message);
+  }
+}
+
+(async function init(){$('headlogo').src=BRAND;if(!sharedEnabled){models=applyStoredModelChanges();initModels();}$('format').value=state.format in opt?state.format:'wide';
 $('density').value=['12','18','24','30'].includes(String(state.density))?String(state.density):'30';
 $('frame').value=['cream','chrome','racing','minimal','gold'].includes(state.frame)?state.frame:'cream';
 $('theme').value=['classic','desert','racing','premium','wash','heritage'].includes(state.theme)?state.theme:'classic';
-document.querySelectorAll('.design-tile').forEach(el=>el.classList.toggle('active',el.dataset.theme===$('theme').value));$('subtitle').value=state.subtitleWeekly;$('autoKW').checked=!!state.autoKW;$('kwManual').disabled=!!state.autoKW;db=await dbInit();await dbLoad();for(const c of models)if((state.hiddenPhotos||[]).includes(c.id))c.image='';restoreExtendedControls();reFilters();renderGrid();refresh();})();
+document.querySelectorAll('.design-tile').forEach(el=>el.classList.toggle('active',el.dataset.theme===$('theme').value));$('subtitle').value=state.subtitleWeekly;$('autoKW').checked=!!state.autoKW;$('kwManual').disabled=!!state.autoKW;db=await dbInit();restoreExtendedControls();if(sharedEnabled){await initSharedCatalog();}else{await dbLoad();for(const c of models)if((state.hiddenPhotos||[]).includes(c.id))c.image='';reFilters();renderGrid();refresh();}})();
 </script>
 </body></html>
